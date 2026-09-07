@@ -6,6 +6,10 @@ services:
       POSTGRES_USER: productpilot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-productpilot}
       POSTGRES_DB: productpilot
+    ports:
+      # Exposed so migrations and the seed script can be run from the host
+      # against this database. Drop this mapping in production.
+      - '5432:5432'
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:

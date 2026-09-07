@@ -60,17 +60,35 @@ data unless it actually is.**
 - Node.js 20+
 - PostgreSQL 14+
 
-### Setup
+### Run it on localhost
 
 ```bash
+git clone https://github.com/shezanshafique3440-code/toolwebsite.git
+cd toolwebsite
+git checkout claude/productpilot-ai-saas-aqefe6
+
 npm install
-cp .env.example .env          # then fill in DATABASE_URL and JWT_SECRET
-npx prisma migrate dev        # create the schema
+cp .env.example .env          # then set DATABASE_URL and JWT_SECRET
+npx prisma migrate deploy     # create the schema
 npm run db:seed               # optional: demo workspace with sample products
 npm run dev
 ```
 
 Open <http://localhost:3000>.
+
+No API key is needed to try it — without one the app runs in demo mode and every generated result is
+labelled as sample output.
+
+If you don't have PostgreSQL locally, start one with Docker and point `DATABASE_URL` at it:
+
+```bash
+docker run --name productpilot-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=productpilot -p 5432:5432 -d postgres:16-alpine
+```
+
+```
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/productpilot?schema=public"
+```
 
 Generate a session secret with:
 
@@ -273,9 +291,17 @@ export JWT_SECRET="$(openssl rand -base64 48)"
 docker compose up --build
 ```
 
-Brings up PostgreSQL and the app, applies migrations on start, and serves on port 3000. The image
-uses Next.js standalone output and runs as a non-root user. `GET /api/health` reports database
-reachability for orchestrator health checks.
+Brings up PostgreSQL and the app, applies migrations on start, and serves on
+<http://localhost:3000>. The image uses Next.js standalone output and runs as a non-root user.
+`GET /api/health` reports database reachability for orchestrator health checks.
+
+The runtime image contains only the built app, so the seed script is run from the host against the
+database the compose file exposes on port 5432:
+
+```bash
+DATABASE_URL="postgresql://productpilot:productpilot@localhost:5432/productpilot?schema=public" \
+  npm run db:seed
+```
 
 ### VPS
 
