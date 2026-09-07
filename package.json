@@ -4,7 +4,7 @@
   "private": true,
   "description": "ProductPilot AI \u2014 AI-powered e-commerce product research and analysis platform.",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.6.0"
   },
   "scripts": {
     "dev": "next dev",

@@ -57,7 +57,8 @@ data unless it actually is.**
 
 ### Requirements
 
-- Node.js 20+
+- Node.js 22.6+ — the seed script and tests run TypeScript directly through Node's built-in type
+  stripping, which landed in 22.6. Node 22 LTS is the safe choice.
 - PostgreSQL 14+
 
 ### Run it on localhost
