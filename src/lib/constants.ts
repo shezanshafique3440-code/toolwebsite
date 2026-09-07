@@ -3,11 +3,23 @@ export const APP_TAGLINE = 'Find winning products before you spend money.';
 export const APP_DESCRIPTION =
   'AI-powered product research, competition analysis, profitability calculations and marketing insights — all in one place.';
 
+/**
+ * Public origin of this deployment.
+ *
+ * Falls back through the explicit settings to `RENDER_EXTERNAL_URL`, which
+ * Render injects automatically, so a Blueprint deploy needs no manual URL.
+ * A bare hostname is normalised to https, because some platforms expose the
+ * host without a scheme.
+ */
 export function appUrl() {
-  return (process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? 'http://localhost:3000').replace(
-    /\/$/,
-    '',
-  );
+  const configured =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    'http://localhost:3000';
+
+  const withScheme = /^https?:\/\//i.test(configured) ? configured : `https://${configured}`;
+  return withScheme.replace(/\/+$/, '');
 }
 
 /**

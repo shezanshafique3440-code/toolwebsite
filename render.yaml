@@ -1,0 +1,50 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# In the Render dashboard: New → Blueprint → pick this repository.
+# It provisions the PostgreSQL instance and the web service together, injects
+# DATABASE_URL, and generates JWT_SECRET, so no secrets have to be pasted by hand.
+
+databases:
+  - name: productpilot-db
+    databaseName: productpilot
+    user: productpilot
+    plan: free # upgrade to `basic-256mb` or higher for production
+
+services:
+  - type: web
+    name: productpilot-ai
+    runtime: node
+    plan: free # free instances sleep when idle; upgrade for always-on
+    region: oregon
+    branch: claude/productpilot-ai-saas-aqefe6
+    # `--include=dev` is required: NODE_ENV=production makes npm skip
+    # devDependencies, and the build needs TypeScript, Tailwind and the Prisma
+    # CLI. Migrations run here so the schema is in place before the new
+    # instance serves traffic; `prisma generate` runs as part of `npm run build`.
+    buildCommand: npm ci --include=dev && npx prisma migrate deploy && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: productpilot-db
+          property: connectionString
+      # Generated once by Render and kept across deploys. Rotating it signs
+      # every user out, which is the intended behaviour for a leaked secret.
+      - key: JWT_SECRET
+        generateValue: true
+      # APP_URL is intentionally unset: the app falls back to Render's own
+      # RENDER_EXTERNAL_URL. Set it explicitly once a custom domain is attached.
+      - key: AI_PROVIDER
+        value: auto
+      # Add a key in the Render dashboard to switch off demo mode. Left unset
+      # here so the blueprint never ships an empty secret that looks configured.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
