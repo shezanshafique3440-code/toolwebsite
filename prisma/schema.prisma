@@ -1,0 +1,419 @@
+// ProductPilot AI — PostgreSQL schema.
+// Every user-owned row carries `userId` so authorisation can always be enforced
+// with a scoped query; no row is ever fetched by id alone.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum Verdict {
+  STRONG
+  POTENTIAL
+  RISKY
+  AVOID
+}
+
+enum TrendDirection {
+  GROWING
+  STABLE
+  DECLINING
+  SEASONAL
+  UNKNOWN
+}
+
+enum AdPlatform {
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+  GOOGLE
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  passwordHash    String
+  name            String
+  avatarUrl       String?
+  role            Role       @default(USER)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  // Bumped on password reset / "sign out everywhere" / suspension so every
+  // previously issued session token stops validating.
+  sessionVersion  Int        @default(1)
+  // Admin-granted extra AI credits on top of the plan allowance.
+  bonusCredits    Int        @default(0)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  subscription       Subscription?
+  usagePeriods       Usage[]
+  products           Product[]
+  analyses           ProductAnalysis[]
+  competitorAnalyses CompetitorAnalysis[]
+  competitors        Competitor[]
+  keywordResearch    KeywordResearch[]
+  listings           GeneratedListing[]
+  ads                GeneratedAd[]
+  audiences          AudienceAnalysis[]
+  reports            SavedReport[]
+  passwordResets     PasswordResetToken[]
+  emailVerifications EmailVerificationToken[]
+  aiRequests         AiRequestLog[]
+
+  @@index([createdAt])
+  @@index([role])
+  @@index([status])
+}
+
+model Subscription {
+  id                     String             @id @default(cuid())
+  userId                 String             @unique
+  plan                   Plan               @default(FREE)
+  status                 SubscriptionStatus @default(ACTIVE)
+  interval               BillingInterval    @default(MONTHLY)
+  currentPeriodStart     DateTime           @default(now())
+  currentPeriodEnd       DateTime
+  cancelAtPeriodEnd      Boolean            @default(false)
+  // Billing provider abstraction: "internal" until a real processor is wired up.
+  provider               String             @default("internal")
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([plan])
+  @@index([status])
+}
+
+/// One row per user per billing period. Credits are consumed here.
+model Usage {
+  id              String   @id @default(cuid())
+  userId          String
+  periodStart     DateTime
+  periodEnd       DateTime
+  analysisCount   Int      @default(0)
+  generationCount Int      @default(0)
+  creditsUsed     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodStart])
+  @@index([userId, periodEnd])
+}
+
+model Product {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  slug       String
+  url        String?
+  imageUrl   String?
+  category   String?
+  /// Raw user-supplied context (pasted description, notes, marketplace copy).
+  notes      String?
+  /// Marks seeded sample products so the UI can label them as demo data.
+  isDemo     Boolean   @default(false)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analyses           ProductAnalysis[]
+  competitorAnalyses CompetitorAnalysis[]
+  keywordResearch    KeywordResearch[]
+  listings           GeneratedListing[]
+  ads                GeneratedAd[]
+  audiences          AudienceAnalysis[]
+  reports            SavedReport[]
+
+  @@index([userId, createdAt])
+  @@index([userId, name])
+}
+
+model ProductAnalysis {
+  id               String         @id @default(cuid())
+  userId           String
+  productId        String
+  overallScore     Int
+  demandScore      Int
+  competitionScore Int
+  profitScore      Int
+  viralScore       Int
+  verdict          Verdict
+  trendDirection   TrendDirection @default(UNKNOWN)
+  sourcingPriceMin Float?
+  sourcingPriceMax Float?
+  sellingPriceMin  Float?
+  sellingPriceMax  Float?
+  marginPercent    Float?
+  /// Full validated `ProductAnalysis` payload (see src/lib/ai/schemas.ts).
+  data             Json
+  provider         String
+  model            String
+  latencyMs        Int            @default(0)
+  isDemo           Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([productId, createdAt])
+  @@index([userId, overallScore])
+  @@index([userId, verdict])
+}
+
+model CompetitorAnalysis {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String?
+  summary   String
+  /// Comparison table + positioning map produced alongside the competitor rows.
+  data      Json
+  provider  String
+  model     String
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product     Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  competitors Competitor[]
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model Competitor {
+  id                   String   @id @default(cuid())
+  userId               String
+  analysisId           String
+  name                 String
+  url                  String?
+  price                Float?
+  currency             String   @default("USD")
+  positioning          String
+  sellingPoints        String[]
+  targetCustomer       String
+  strengths            String[]
+  weaknesses           String[]
+  marketingAngle       String
+  offerStructure       String
+  cta                  String
+  estimatedPositioning String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user     User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analysis CompetitorAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId])
+  @@index([userId, createdAt])
+}
+
+model KeywordResearch {
+  id             String   @id @default(cuid())
+  userId         String
+  productId      String?
+  primaryKeyword String
+  suggestedTitle String
+  keywordCount   Int      @default(0)
+  data           Json
+  provider       String
+  model          String
+  isDemo         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model GeneratedListing {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String?
+  title     String
+  data      Json
+  provider  String
+  model     String
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model GeneratedAd {
+  id        String     @id @default(cuid())
+  userId    String
+  productId String?
+  platform  AdPlatform
+  data      Json
+  provider  String
+  model     String
+  isDemo    Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([productId, platform])
+}
+
+model AudienceAnalysis {
+  id          String   @id @default(cuid())
+  userId      String
+  productId   String?
+  personaName String
+  data        Json
+  provider    String
+  model       String
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model SavedReport {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  title     String
+  /// Immutable snapshot so an exported report never changes under the user.
+  snapshot  Json
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// SHA-256 of the token; the raw value only ever exists in the reset email.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// One row per outbound AI call — powers the admin usage and cost dashboard.
+model AiRequestLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  operation    String
+  provider     String
+  model        String
+  success      Boolean  @default(true)
+  errorCode    String?
+  latencyMs    Int      @default(0)
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costUsd      Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([provider, createdAt])
+  @@index([success])
+}
+
+/// Server-side application log surfaced in the admin panel.
+model SystemLog {
+  id        String   @id @default(cuid())
+  level     LogLevel @default(INFO)
+  event     String
+  message   String
+  context   Json?
+  userId    String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level, createdAt])
+}

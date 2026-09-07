@@ -1,0 +1,231 @@
+@import 'tailwindcss';
+
+/*
+ * ProductPilot AI — design tokens.
+ * Neutral ink + a single restrained brand accent. Score colours carry the
+ * semantic weight so the interface never depends on decorative gradients.
+ */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --color-ink-50: #f6f7f8;
+  --color-ink-100: #eceef1;
+  --color-ink-200: #d9dde3;
+  --color-ink-300: #b9c0ca;
+  --color-ink-400: #8d97a5;
+  --color-ink-500: #6b7685;
+  --color-ink-600: #545e6b;
+  --color-ink-700: #444c57;
+  --color-ink-800: #3a414a;
+  --color-ink-900: #12171d;
+  --color-ink-950: #0a0d11;
+
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe6ff;
+  --color-brand-200: #bed3ff;
+  --color-brand-300: #91b6ff;
+  --color-brand-400: #5d8dff;
+  --color-brand-500: #3663f6;
+  --color-brand-600: #2148eb;
+  --color-brand-700: #1a37d4;
+  --color-brand-800: #1c2fab;
+  --color-brand-900: #1c2e87;
+
+  --color-score-strong: #0f9d58;
+  --color-score-potential: #c98a00;
+  --color-score-risky: #e2620f;
+  --color-score-avoid: #d33b3b;
+
+  --radius-card: 0.875rem;
+
+  --shadow-subtle: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.06);
+  --shadow-raised: 0 4px 6px -2px rgb(16 24 40 / 0.03), 0 12px 16px -4px rgb(16 24 40 / 0.08);
+}
+
+/*
+ * Runtime surface variables so light/dark are one token swap. `@theme inline`
+ * maps them into Tailwind utilities (bg-surface, text-fg, border-line, ...).
+ */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+}
+
+:root {
+  --canvas: #fbfbfc;
+  --surface: #ffffff;
+  --surface-muted: #f6f7f9;
+  --fg: #0f1319;
+  --fg-muted: #545e6b;
+  --fg-subtle: #8d97a5;
+  --line: #e7e9ee;
+  --line-strong: #d6dae1;
+  --accent: #12171d;
+  --accent-fg: #ffffff;
+  --accent-soft: #eef4ff;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: #0a0d11;
+  --surface: #11151b;
+  --surface-muted: #161b22;
+  --fg: #f2f4f7;
+  --fg-muted: #98a2b3;
+  --fg-subtle: #6b7685;
+  --line: #232a33;
+  --line-strong: #313a45;
+  --accent: #ffffff;
+  --accent-fg: #0a0d11;
+  --accent-soft: #182031;
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--fg);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Visible, consistent focus ring for keyboard users across the whole app. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-brand-200);
+    color: var(--color-ink-950);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+    letter-spacing: -0.02em;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer utilities {
+  .container-page {
+    width: 100%;
+    margin-inline: auto;
+    max-width: 78rem;
+    padding-inline: 1.25rem;
+  }
+
+  @media (min-width: 1024px) {
+    .container-page {
+      padding-inline: 2rem;
+    }
+  }
+
+  .hairline {
+    border: 1px solid var(--line);
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface-muted) 25%, var(--line) 37%, var(--surface-muted) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease infinite;
+  }
+
+  .animate-rise {
+    animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .animate-fade {
+    animation: fade 0.4s ease both;
+  }
+
+  /* Grid backdrop used behind the landing hero — cheap, no images. */
+  .grid-backdrop {
+    background-image: linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Print styles: the report page doubles as a browser-printable document. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+}
