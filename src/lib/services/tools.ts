@@ -2,10 +2,9 @@ import 'server-only';
 import type { AdPlatform, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
-import { AppError } from '@/lib/errors';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { consumeQuota, refundQuota } from '@/lib/billing/service';
-import { FEATURE_LABELS, PLANS, planFeatureAllowed, type PlanFeature } from '@/lib/plans';
+import { requireFeature } from '@/lib/billing/guards';
 import { generateStructured } from '@/lib/ai';
 import { adPrompt, audiencePrompt, competitorAnalysisPrompt, keywordPrompt, listingPrompt } from '@/lib/ai/prompts';
 import {
@@ -24,15 +23,11 @@ import type {
 } from '@/lib/validation/tools';
 import { getOwnedProduct } from '@/lib/services/products';
 
-/** Server-side feature gate. The UI hides locked tools; this is what enforces it. */
-export function assertFeature(user: CurrentUser, feature: PlanFeature) {
-  if (!planFeatureAllowed(user.plan, feature)) {
-    throw new AppError(
-      'FORBIDDEN',
-      `${FEATURE_LABELS[feature]} is available on the Pro and Business plans. You are currently on ${PLANS[user.plan].name}.`,
-    );
-  }
-}
+/**
+ * Server-side feature gate. Re-exported from the billing guards so every caller
+ * shares one implementation and one set of error codes.
+ */
+export const assertFeature = requireFeature;
 
 async function resolveProductId(userId: string, productId?: string) {
   if (!productId) return null;

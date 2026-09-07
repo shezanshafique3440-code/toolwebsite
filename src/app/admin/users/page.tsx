@@ -48,10 +48,10 @@ export default async function AdminUsersPage({
               <TableRow>
                 <TableHead>User</TableHead>
                 <TableHead>Plan</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Products</TableHead>
-                <TableHead>Analyses</TableHead>
-                <TableHead>Credits</TableHead>
+                <TableHead>Subscription</TableHead>
+                <TableHead>Billing period</TableHead>
+                <TableHead>Provider IDs</TableHead>
+                <TableHead>Account</TableHead>
                 <TableHead>Joined</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -69,17 +69,60 @@ export default async function AdminUsersPage({
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={user.subscription?.plan === 'FREE' ? 'neutral' : 'brand'}>
-                      {PLANS[user.subscription?.plan ?? 'FREE'].name}
+                    <div className="flex flex-col gap-1">
+                      <Badge variant={user.subscription?.plan === 'FREE' ? 'neutral' : 'brand'}>
+                        {PLANS[user.subscription?.plan ?? 'FREE'].name}
+                      </Badge>
+                      <span className="text-xs text-fg-subtle">
+                        {user.subscription?.provider === 'paddle'
+                          ? 'Paddle'
+                          : user.subscription?.provider === 'manual'
+                            ? 'Complimentary'
+                            : '—'}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        user.subscription?.status === 'ACTIVE'
+                          ? 'strong'
+                          : user.subscription?.status === 'PAST_DUE'
+                            ? 'risky'
+                            : user.subscription?.status === 'PAUSED'
+                              ? 'potential'
+                              : 'neutral'
+                      }
+                    >
+                      {user.subscription?.status ?? 'ACTIVE'}
                     </Badge>
+                    {user.subscription?.cancelAtPeriodEnd && (
+                      <p className="mt-1 text-xs text-fg-subtle">Cancels at period end</p>
+                    )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-fg-muted">
+                    {user.subscription
+                      ? `${formatDate(user.subscription.currentPeriodStart)} – ${formatDate(user.subscription.currentPeriodEnd)}`
+                      : '—'}
+                  </TableCell>
+                  <TableCell className="font-mono text-[11px] leading-relaxed text-fg-muted">
+                    {user.subscription?.providerCustomerId ? (
+                      <>
+                        <span className="block">{user.subscription.providerCustomerId}</span>
+                        <span className="block text-fg-subtle">
+                          {user.subscription.providerSubscriptionId ?? 'no subscription id'}
+                        </span>
+                      </>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant={user.status === 'ACTIVE' ? 'strong' : 'avoid'}>{user.status}</Badge>
-                  </TableCell>
-                  <TableCell className="tabular-nums">{user._count.products}</TableCell>
-                  <TableCell className="tabular-nums">{user._count.analyses}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {user.bonusCredits > 0 ? `+${user.bonusCredits}` : '—'}
+                    <p className="mt-1 text-xs text-fg-subtle">
+                      {user._count.products} products · {user._count.analyses} analyses
+                      {user.bonusCredits > 0 ? ` · +${user.bonusCredits} credits` : ''}
+                    </p>
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-fg-muted">{formatDate(user.createdAt)}</TableCell>
                   <TableCell className="text-right">
@@ -92,6 +135,7 @@ export default async function AdminUsersPage({
                         status: user.status,
                         bonusCredits: user.bonusCredits,
                         plan: user.subscription?.plan ?? 'FREE',
+                        paidSubscription: user.subscription?.provider === 'paddle',
                       }}
                     />
                   </TableCell>

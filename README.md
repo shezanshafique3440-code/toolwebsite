@@ -216,7 +216,17 @@ GET    /api/admin/stats                GET    /api/health
 GET    /api/admin/users
 GET    /api/admin/users/:id
 PATCH  /api/admin/users/:id
+POST   /api/admin/users/:id/grant      (audited complimentary plan)
+DELETE /api/admin/users/:id/grant      (revoke a grant)
 GET    /api/admin/logs
+
+Billing:
+
+POST   /api/billing/checkout           (creates a Paddle transaction; grants nothing)
+POST   /api/billing/portal             (Paddle customer portal links)
+POST   /api/billing/cancel             (cancel at period end, via Paddle)
+POST   /api/webhooks/paddle            (signature-verified; the only path that
+                                        can change a subscription)
 ```
 
 ---
@@ -242,23 +252,42 @@ GET    /api/admin/logs
 - Errors surfaced to users are mapped, human-readable messages — never stack traces or provider
   errors.
 
+**Payments**
+
+- Card details never reach this server. Paddle hosts the checkout and is the merchant of record.
+- A subscription is granted only by a webhook whose Paddle signature verifies against
+  `PADDLE_WEBHOOK_SECRET`. A completed checkout in the browser is treated as *pending*, never as paid.
+- `Subscription.plan` has exactly one writer, `applySubscriptionState()`, reachable only from the
+  verified webhook and the audited admin grant.
+- Every webhook is recorded with a unique `eventId`, so a redelivery cannot be applied twice.
+- An event carrying an unconfigured price never grants a plan.
+- Administrators can grant a complimentary plan, but it is stored as a manual grant with the issuing
+  admin and a mandatory reason — it can never be mistaken for, or counted as, a payment.
+
 ---
 
-## Billing
+## Plans and what each unlocks
 
-Plan changes go through a `BillingProvider` interface. The bundled `InternalBillingProvider` applies
-changes directly and takes no payment; the billing page states this plainly rather than pretending a
-processor is connected. Adding Stripe means implementing the interface and returning it from
-`getBillingProvider()`.
+Enforced server-side in `src/lib/plans.ts` (`PLAN_FEATURES`) and applied by
+`requirePlan()` / `requireFeature()`. A Free user calling a Pro endpoint directly gets
+HTTP 403 `PRO_PLAN_REQUIRED`, regardless of what the browser shows.
 
-The billing period is deliberately preserved across a plan change, so quota cannot be reset by
-switching plans back and forth.
+| Capability | Free | Pro | Business |
+| --- | --- | --- | --- |
+| Product analyses per month | 5 | 100 | 500 |
+| AI credits per month | 15 | 400 | 2000 |
+| Product research report | ✓ | ✓ | ✓ |
+| Profit calculator | ✓ (unlimited) | ✓ | ✓ |
+| SEO keyword research | ✓ | ✓ | ✓ |
+| Competitor analysis | — | ✓ | ✓ |
+| Listing generator | — | ✓ | ✓ |
+| Ad copy generator | — | ✓ | ✓ |
+| Audience builder | — | ✓ | ✓ |
+| Saved reports | — | ✓ | ✓ |
+| PDF export | — | ✓ | ✓ |
+| Team members | — | — | ✓ |
+| API access | — | — | ✓ (architecture in place, not yet exposed) |
 
-| Plan | Price | Analyses / month | AI credits | Includes |
-| --- | --- | --- | --- | --- |
-| Free | $0 | 5 | 15 | Scores, basic insights, keywords, unlimited calculator |
-| Pro | $19/mo (or $182/yr) | 100 | 400 | Everything: competitors, listings, ads, audience, saved reports, PDF export |
-| Business | $49/mo (or $470/yr) | 500 | 2000 | Everything in Pro, team seats, priority processing, API access (coming soon) |
 
 ---
 
@@ -326,6 +355,203 @@ without forcing a Prisma major upgrade. Re-check with:
 ```bash
 npm audit
 ```
+
+## Billing with Paddle
+
+Payments run on **Paddle Billing**. Paddle is the merchant of record: it hosts the
+checkout, holds the card details, handles tax, and pays out to the account owner's
+verified Paddle payout settings. This application never sees a card number.
+
+### The rule that shapes the design
+
+> A plan becomes paid **only** when a signature-verified Paddle webhook says so.
+
+There is exactly one function in the codebase that writes `Subscription.plan` —
+`applySubscriptionState()` in `src/lib/billing/subscription-state.ts`. It is called
+from two places: the verified webhook handler, and the audited admin grant. No API
+route, no request body and no browser state can reach it. `POST /api/billing/checkout`
+creates a Paddle transaction and returns an id to open the checkout with; it grants
+nothing.
+
+### 1. Create the Paddle account
+
+1. Sign up at <https://www.paddle.com>. You get a **sandbox** account at
+   <https://sandbox-vendors.paddle.com> and a live account at
+   <https://vendors.paddle.com>. They are separate: separate credentials, separate
+   price IDs. Build against sandbox first.
+2. For live payments, complete Paddle's seller verification and enter your payout
+   details in **Paddle → Business account → Payout details**. That is where the money
+   arrives — it is configured by you inside Paddle, never in this application.
+
+### 2. Create the products and prices
+
+In **Paddle → Catalog → Products**:
+
+1. **New product** — name it `ProductPilot AI Pro`.
+   Add a price: **$19.00 USD**, billing period **monthly**. Copy the price ID
+   (`pri_...`) → this is `PADDLE_PRO_PRICE_ID`.
+2. **New product** — name it `ProductPilot AI Business`.
+   Add a price: **$49.00 USD**, billing period **monthly**. Copy the price ID
+   → this is `PADDLE_BUSINESS_PRICE_ID`.
+
+The amounts must match `src/lib/plans.ts`, which is what the pricing page displays.
+If they disagree, the page advertises one price and Paddle charges another.
+
+### 3. Get the API credentials
+
+In **Paddle → Developer tools → Authentication**:
+
+| Value | Where | Variable | Secret? |
+| --- | --- | --- | --- |
+| API key (`pdl_...`) | *API keys* → New API key | `PADDLE_API_KEY` | **Yes** — server only |
+| Client-side token | *Client-side tokens* → New token | `PADDLE_CLIENT_TOKEN` | No — published to the browser to open the checkout |
+
+### 4. Configure the webhook
+
+In **Paddle → Developer tools → Notifications → New destination**:
+
+- **URL**: `https://YOUR-DOMAIN.com/api/webhooks/paddle`
+  (Render gives you `https://productpilot-ai.onrender.com/api/webhooks/paddle`.)
+- **Notification type**: Webhook
+- Copy the **secret key** shown once on creation (`pdl_ntfset_...`) →
+  `PADDLE_WEBHOOK_SECRET`.
+
+Enable these events — they are the ones the handler acts on:
+
+| Event | What it does here |
+| --- | --- |
+| `subscription.created` | Records the subscription against the account |
+| `subscription.activated` | **Grants the paid plan** |
+| `subscription.updated` | Syncs plan, price, period and a scheduled cancellation |
+| `subscription.resumed` | Restores access after a pause |
+| `subscription.trialing` | Grants access during a trial |
+| `subscription.past_due` | Marks the account overdue — access continues while Paddle retries |
+| `subscription.paused` | Suspends paid access |
+| `subscription.canceled` | Ends access, or schedules it for the end of the paid period |
+| `transaction.completed` | Payment confirmation hook |
+| `transaction.payment_failed` | Records the failed attempt for support |
+
+Any other event is accepted, recorded and ignored.
+
+### 5. Environment variables
+
+```
+PADDLE_ENVIRONMENT=sandbox          # or "production"
+PADDLE_API_KEY=pdl_...              # secret, server only
+PADDLE_CLIENT_TOKEN=test_...        # public, sent to the browser
+PADDLE_WEBHOOK_SECRET=pdl_ntfset_...# secret, server only
+PADDLE_PRO_PRICE_ID=pri_...
+PADDLE_BUSINESS_PRICE_ID=pri_...
+APP_URL=https://your-domain.com
+```
+
+With any of them missing, the billing page says payments are unavailable and
+checkout returns `BILLING_UNAVAILABLE`. It never falls back to granting a plan.
+
+### 6. Local sandbox testing
+
+Paddle cannot reach `localhost`, so expose it with a tunnel:
+
+```bash
+npx untun@latest tunnel http://localhost:3000
+# or: ngrok http 3000
+```
+
+Put the public URL in the Paddle notification destination
+(`https://<tunnel>/api/webhooks/paddle`) and in `APP_URL`, then:
+
+```bash
+npm run dev
+```
+
+Walk the flow:
+
+| # | Step | Expected |
+| --- | --- | --- |
+| 1 | Sign up | Free plan, 5 analyses |
+| 2 | Billing → **Upgrade to Pro** | "Opening secure checkout…", Paddle overlay opens |
+| 3 | Pay with Paddle's test card `4242 4242 4242 4242`, any future expiry and CVC | Checkout completes |
+| 4 | Watch the page | "Confirming your payment…" while it polls the backend |
+| 5 | Webhook arrives | Plan flips to Pro, "Subscription activated." |
+| 6 | Admin → Billing | The delivery is listed as *Applied* |
+| 7 | Call a Pro endpoint | Works |
+| 8 | Check limits | 100 analyses, 400 credits |
+| 9 | **Cancel subscription** | "Cancels at period end", access retained |
+| 10 | Paddle → cancel immediately | Account returns to Free with 5 analyses |
+
+Verify the guard directly while signed in as a Free user:
+
+```bash
+curl -X POST http://localhost:3000/api/competitors/analyze \
+  -H 'Content-Type: application/json' -H 'Origin: http://localhost:3000' \
+  -b cookies.txt -d '{"productName":"Test","competitorUrls":[]}'
+# → HTTP 403 {"error":{"code":"PRO_PLAN_REQUIRED", ...}}
+```
+
+### 7. Render configuration
+
+**Render dashboard → your service → Environment → Add environment variable.**
+Add these six (the blueprint declares them as `sync: false`, so Render prompts for
+the values and nothing is stored in the repository):
+
+```
+PADDLE_API_KEY
+PADDLE_CLIENT_TOKEN
+PADDLE_WEBHOOK_SECRET
+PADDLE_ENVIRONMENT
+PADDLE_PRO_PRICE_ID
+PADDLE_BUSINESS_PRICE_ID
+```
+
+`APP_URL` is optional — the app falls back to Render's `RENDER_EXTERNAL_URL`. Set it
+explicitly once a custom domain is attached. Render restarts the service after
+environment changes; no rebuild is needed.
+
+Then set the Paddle webhook URL to
+`https://<your-render-domain>/api/webhooks/paddle`.
+
+### 8. Going live
+
+1. Repeat the product, price, API key, client token and webhook setup in the **live**
+   Paddle dashboard — none of the sandbox values work in production.
+2. Complete Paddle's seller verification and payout details.
+3. In Render set `PADDLE_ENVIRONMENT=production` and replace the other five values
+   with the live ones.
+4. Run one real low-value transaction end to end before announcing it.
+
+### 9. How activation and cancellation work
+
+**Activation.** Checkout completes → Paddle sends `subscription.activated` →
+signature verified → recorded in `PaymentEvent` (unique `eventId`, so a redelivery is
+ignored) → `applySubscriptionState()` writes the plan and period → the browser, which
+has been polling `/api/billing`, shows "Subscription activated." If the webhook is
+slow the UI says the payment was received and is being confirmed; it never claims
+success on its own.
+
+**Cancellation.** "Cancel subscription" calls Paddle with
+`effective_from: next_billing_period`. Paddle replies with `subscription.updated`
+carrying a scheduled change, which sets `cancelAtPeriodEnd`. **Access is not withdrawn
+then** — the customer paid for the period. When the period ends Paddle sends
+`subscription.canceled` and the account returns to Free.
+
+**Failed payment.** `subscription.past_due` sets the status and shows a billing
+warning. Access continues while Paddle retries, and no data is deleted.
+
+### 10. Troubleshooting webhooks
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Checkout completes, plan never changes | The webhook is not arriving. Check **Paddle → Notifications → your destination → Logs** for delivery attempts and the response code. |
+| Deliveries return `400 Invalid signature` | `PADDLE_WEBHOOK_SECRET` does not match the destination. It is shown once at creation — regenerate it and update the environment. |
+| Deliveries return `503 Billing is not configured` | One of the `PADDLE_*` variables is missing on the server. |
+| Events show as **Ignored** in Admin → Billing | The event type is not one the handler acts on. Harmless. |
+| Events show as **Failed** | The error is stored on the row and shown in the admin table. Fix the cause and replay the delivery from Paddle. |
+| Log says `billing.webhook_unmapped` | The event could not be matched to an account — its `custom_data.userId`, subscription id and customer id are all unknown. Usually a subscription created directly in Paddle rather than through checkout. |
+| Log says `billing.webhook_unknown_price` | The price ID in the event is not `PADDLE_PRO_PRICE_ID` or `PADDLE_BUSINESS_PRICE_ID`. The plan is deliberately left unchanged rather than guessed. |
+| Log says `billing.webhook_unparseable` | The signature was valid but the payload shape is unknown to this SDK version — update `@paddle/paddle-node-sdk`. |
+
+Every delivery is visible in **Admin → Billing**, and the raw rows are in the
+`PaymentEvent` table.
 
 ## Testing
 

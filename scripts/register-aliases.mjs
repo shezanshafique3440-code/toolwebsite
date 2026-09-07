@@ -6,6 +6,17 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 const srcRoot = path.resolve(import.meta.dirname, '..', 'src');
+
+// Load .env so modules that read process.env (the database client, billing
+// configuration) behave the same as they do under `next dev`.
+const envFile = path.resolve(import.meta.dirname, '..', '.env');
+if (existsSync(envFile)) {
+  try {
+    process.loadEnvFile(envFile);
+  } catch {
+    // Older Node without loadEnvFile: tests that need env must set it themselves.
+  }
+}
 const CANDIDATES = ['', '.ts', '.tsx', '/index.ts', '/index.tsx'];
 
 function resolveAlias(specifier) {

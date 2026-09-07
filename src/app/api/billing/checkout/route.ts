@@ -2,40 +2,39 @@ import { z } from 'zod';
 import { jsonOk, parseJsonBody, route } from '@/lib/api';
 import { requireUser } from '@/lib/auth/current-user';
 import { enforceRateLimit } from '@/lib/rate-limit';
-import { getBillingProvider } from '@/lib/billing/service';
-import { logger } from '@/lib/logger';
+import { createCheckoutIntent } from '@/lib/billing/paddle/checkout';
+import { AppError } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Only paid plans can be checked out. Downgrading to Free is a cancellation,
+// which goes through Paddle so the paid period is honoured.
 const checkoutSchema = z.object({
-  plan: z.enum(['FREE', 'PRO', 'BUSINESS']),
-  interval: z.enum(['MONTHLY', 'YEARLY']).default('MONTHLY'),
+  plan: z.enum(['PRO', 'BUSINESS']),
 });
 
 /**
- * Plan changes go through the billing provider abstraction. The bundled internal
- * provider applies the change directly and takes no payment — the UI states this
- * plainly. Swapping in a payment provider requires no changes here.
+ * Opens a Paddle checkout.
+ *
+ * This endpoint grants nothing. It creates a Paddle transaction and returns the
+ * identifiers the browser needs to open Paddle's hosted checkout. The user's
+ * plan changes only when Paddle sends a signature-verified webhook confirming
+ * the subscription is active.
  */
 export const POST = route('billing.checkout', async (request) => {
   const user = await requireUser();
-  await enforceRateLimit('write', user.id);
+  await enforceRateLimit('write', `checkout:${user.id}`);
   const input = await parseJsonBody(request, checkoutSchema);
 
-  const provider = getBillingProvider();
-  const result = await provider.createCheckout({
-    userId: user.id,
-    plan: input.plan,
-    interval: input.interval,
-  });
+  if (user.plan === input.plan && user.entitlements.active) {
+    throw new AppError('CONFLICT', `You are already on the ${input.plan === 'PRO' ? 'Pro' : 'Business'} plan.`);
+  }
 
-  await logger.info({
-    event: 'billing.plan_changed',
-    message: `Plan set to ${input.plan} (${input.interval})`,
-    userId: user.id,
-    context: { provider: provider.id },
-  });
+  const intent = await createCheckoutIntent(
+    { id: user.id, email: user.email, name: user.name },
+    input.plan,
+  );
 
-  return jsonOk(result);
+  return jsonOk(intent);
 });

@@ -3,6 +3,7 @@ import type { Plan, Subscription, Usage } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { PLANS } from '@/lib/plans';
+import { entitlementIsActive } from '@/lib/billing/subscription-state';
 
 export type BillingPeriod = { start: Date; end: Date };
 
@@ -13,13 +14,17 @@ function addMonths(date: Date, months: number) {
 }
 
 /**
- * Returns the subscription for a user, creating the default Free subscription on
- * first access and rolling the period forward when it has lapsed. Rolling the
- * period forward is what resets monthly usage: `Usage` rows are keyed by
- * `periodStart`, so a new period starts from a fresh counter.
+ * Returns the subscription record, creating the default Free one on first
+ * access.
+ *
+ * The usage window is only rolled forward for accounts this application owns
+ * (Free and manual grants). For a Paddle-managed subscription the billing
+ * period comes from Paddle and is written by the webhook — rolling it here
+ * would let the local clock disagree with what the customer is actually billed.
  */
 export async function ensureSubscription(userId: string): Promise<Subscription> {
   const existing = await prisma.subscription.findUnique({ where: { userId } });
+
   if (!existing) {
     const start = new Date();
     return prisma.subscription.create({
@@ -28,36 +33,29 @@ export async function ensureSubscription(userId: string): Promise<Subscription> 
         plan: 'FREE',
         status: 'ACTIVE',
         interval: 'MONTHLY',
+        provider: 'internal',
         currentPeriodStart: start,
         currentPeriodEnd: addMonths(start, 1),
       },
     });
   }
 
+  if (existing.provider === 'paddle') return existing;
   if (existing.currentPeriodEnd.getTime() > Date.now()) return existing;
 
-  // Period lapsed. For the internal (non-payment) provider we simply renew.
+  // A locally-managed period has lapsed: open the next one so monthly usage
+  // resets. Catch up if the account was dormant for several periods.
   const months = existing.interval === 'YEARLY' ? 12 : 1;
   let start = existing.currentPeriodEnd;
   let end = addMonths(start, months);
-  const now = Date.now();
-  // Catch up if the account was dormant for several periods.
-  while (end.getTime() <= now) {
+  while (end.getTime() <= Date.now()) {
     start = end;
     end = addMonths(start, months);
   }
 
-  const downgrade = existing.cancelAtPeriodEnd && existing.plan !== 'FREE';
-
   return prisma.subscription.update({
     where: { userId },
-    data: {
-      currentPeriodStart: start,
-      currentPeriodEnd: end,
-      plan: downgrade ? 'FREE' : existing.plan,
-      status: downgrade ? 'CANCELED' : existing.status,
-      cancelAtPeriodEnd: downgrade ? false : existing.cancelAtPeriodEnd,
-    },
+    data: { currentPeriodStart: start, currentPeriodEnd: end },
   });
 }
 
@@ -72,7 +70,12 @@ export async function getOrCreateUsage(userId: string, period: BillingPeriod): P
 }
 
 export type Entitlements = {
+  /** The plan actually in force right now — never what the client claims. */
   plan: Plan;
+  /** The plan on the subscription record, which may be lapsed. */
+  subscribedPlan: Plan;
+  /** False when the paid subscription is expired, paused or ended. */
+  active: boolean;
   period: BillingPeriod;
   analysesLimit: number;
   analysesUsed: number;
@@ -83,15 +86,26 @@ export type Entitlements = {
   bonusCredits: number;
 };
 
+/**
+ * Resolves what a user may actually do, from the database only.
+ *
+ * A paid plan whose entitlement is no longer active silently falls back to the
+ * Free allowance, so an expired or paused subscription cannot keep spending.
+ */
 export async function getEntitlements(userId: string, bonusCredits: number): Promise<Entitlements> {
   const subscription = await ensureSubscription(userId);
+  const active = entitlementIsActive(subscription);
+  const plan: Plan = active ? subscription.plan : 'FREE';
+
   const period = { start: subscription.currentPeriodStart, end: subscription.currentPeriodEnd };
   const usage = await getOrCreateUsage(userId, period);
-  const definition = PLANS[subscription.plan];
+  const definition = PLANS[plan];
   const creditsGranted = definition.creditsPerMonth + bonusCredits;
 
   return {
-    plan: subscription.plan,
+    plan,
+    subscribedPlan: subscription.plan,
+    active,
     period,
     analysesLimit: definition.analysesPerMonth,
     analysesUsed: usage.analysisCount,
@@ -107,7 +121,8 @@ export type ConsumeKind = 'analysis' | 'generation';
 
 /**
  * Atomically reserves quota before an AI call. Runs inside a transaction with a
- * conditional update so two concurrent requests cannot both spend the last credit.
+ * conditional check so two concurrent requests cannot both spend the last
+ * credit. The limit comes from the effective plan, never from the request.
  */
 export async function consumeQuota(input: {
   userId: string;
@@ -115,11 +130,9 @@ export async function consumeQuota(input: {
   kind: ConsumeKind;
   credits: number;
 }) {
-  const subscription = await ensureSubscription(input.userId);
-  const period = { start: subscription.currentPeriodStart, end: subscription.currentPeriodEnd };
-  await getOrCreateUsage(input.userId, period);
-  const definition = PLANS[subscription.plan];
-  const creditsGranted = definition.creditsPerMonth + input.bonusCredits;
+  const entitlements = await getEntitlements(input.userId, input.bonusCredits);
+  const definition = PLANS[entitlements.plan];
+  const period = entitlements.period;
 
   return prisma.$transaction(async (tx) => {
     const usage = await tx.usage.findUniqueOrThrow({
@@ -129,11 +142,11 @@ export async function consumeQuota(input: {
     if (input.kind === 'analysis' && usage.analysisCount >= definition.analysesPerMonth) {
       throw new AppError(
         'QUOTA_EXCEEDED',
-        `You've used all ${definition.analysesPerMonth} analyses on the ${definition.name} plan this month. Upgrade to keep researching.`,
+        `You've used all ${definition.analysesPerMonth} analyses on the ${definition.name} plan this period. Upgrade to keep researching.`,
       );
     }
 
-    if (usage.creditsUsed + input.credits > creditsGranted) {
+    if (usage.creditsUsed + input.credits > entitlements.creditsGranted) {
       throw new AppError(
         'QUOTA_EXCEEDED',
         `You've run out of AI credits for this billing period. Upgrade your plan or wait until ${period.end.toLocaleDateString('en-US', { dateStyle: 'medium' })}.`,
@@ -170,71 +183,4 @@ export async function refundQuota(input: {
   } catch {
     // A failed refund must not mask the original error; usage self-corrects next period.
   }
-}
-
-/**
- * Billing provider abstraction. `InternalBillingProvider` records plan changes
- * directly; a Stripe implementation can be dropped in behind the same interface
- * without touching callers.
- */
-export interface BillingProvider {
-  readonly id: string;
-  readonly supportsCheckout: boolean;
-  createCheckout(input: {
-    userId: string;
-    plan: Plan;
-    interval: 'MONTHLY' | 'YEARLY';
-  }): Promise<{ kind: 'redirect'; url: string } | { kind: 'applied' }>;
-  cancel(input: { userId: string }): Promise<void>;
-}
-
-export class InternalBillingProvider implements BillingProvider {
-  readonly id = 'internal';
-  readonly supportsCheckout = false;
-
-  async createCheckout(input: { userId: string; plan: Plan; interval: 'MONTHLY' | 'YEARLY' }) {
-    const subscription = await ensureSubscription(input.userId);
-
-    // The billing window is deliberately preserved across a plan change.
-    // Restarting it would reset the usage counter, letting anyone refresh their
-    // monthly quota by switching plans back and forth. A new window only opens
-    // when the current one has already lapsed.
-    const lapsed = subscription.currentPeriodEnd.getTime() <= Date.now();
-    const start = lapsed ? new Date() : subscription.currentPeriodStart;
-    const end = lapsed ? addMonths(start, input.interval === 'YEARLY' ? 12 : 1) : subscription.currentPeriodEnd;
-
-    await prisma.subscription.update({
-      where: { userId: input.userId },
-      data: {
-        plan: input.plan,
-        interval: input.interval,
-        status: 'ACTIVE',
-        cancelAtPeriodEnd: false,
-        currentPeriodStart: start,
-        currentPeriodEnd: end,
-        provider: this.id,
-      },
-    });
-    return { kind: 'applied' as const };
-  }
-
-  async cancel(input: { userId: string }) {
-    await prisma.subscription.update({
-      where: { userId: input.userId },
-      data: { cancelAtPeriodEnd: true },
-    });
-  }
-}
-
-/**
- * Resolves the active billing provider. Stripe keys are read server-side only;
- * until a Stripe implementation is added the internal provider is used and the
- * UI states plainly that payments are not yet live.
- */
-export function getBillingProvider(): BillingProvider {
-  return new InternalBillingProvider();
-}
-
-export function paymentsConfigured() {
-  return Boolean(process.env.STRIPE_SECRET_KEY);
 }

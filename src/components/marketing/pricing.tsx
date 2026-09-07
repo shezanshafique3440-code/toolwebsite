@@ -5,34 +5,28 @@ import Link from 'next/link';
 import { Check, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { PLANS, PLAN_ORDER, yearlySavingsPercent } from '@/lib/plans';
+import { PLANS, PLAN_ORDER } from '@/lib/plans';
 import { cn, formatCurrency } from '@/lib/utils';
 
 export function PricingTable({
   currentPlan,
   onSelect,
   busyPlan,
+  disabled,
 }: {
   currentPlan?: string;
-  onSelect?: (plan: 'FREE' | 'PRO' | 'BUSINESS', interval: 'MONTHLY' | 'YEARLY') => void;
+  /** When omitted the table is marketing-only and links to signup. */
+  onSelect?: (plan: 'FREE' | 'PRO' | 'BUSINESS') => void;
   busyPlan?: string | null;
+  disabled?: boolean;
 }) {
-  const [yearly, setYearly] = React.useState(false);
 
   return (
     <div>
-      <div className="flex items-center justify-center gap-3">
-        <span className={cn('text-sm', yearly ? 'text-fg-muted' : 'font-medium text-fg')}>Monthly</span>
-        <Switch checked={yearly} onCheckedChange={setYearly} aria-label="Show yearly pricing" />
-        <span className={cn('text-sm', yearly ? 'font-medium text-fg' : 'text-fg-muted')}>Yearly</span>
-        <Badge variant="strong">Save {yearlySavingsPercent(PLANS.PRO)}%</Badge>
-      </div>
-
-      <div className="mt-10 grid gap-5 lg:grid-cols-3">
+      <div className="grid gap-5 lg:grid-cols-3">
         {PLAN_ORDER.map((id) => {
           const plan = PLANS[id];
-          const price = yearly ? plan.yearlyPrice / 12 : plan.monthlyPrice;
+          const price = plan.monthlyPrice;
           const isCurrent = currentPlan === id;
 
           return (
@@ -62,22 +56,19 @@ export function PricingTable({
                 {price > 0 && <span className="text-sm text-fg-muted">/ month</span>}
               </div>
               <p className="mt-1.5 h-5 text-xs text-fg-subtle">
-                {yearly && plan.yearlyPrice > 0
-                  ? `${formatCurrency(plan.yearlyPrice, 'USD', 0)} billed yearly`
-                  : plan.monthlyPrice > 0
-                    ? 'Billed monthly, cancel any time'
-                    : 'No card required'}
+                {plan.monthlyPrice > 0 ? 'Billed monthly, cancel any time' : 'No card required'}
               </p>
 
               {onSelect ? (
                 <Button
                   className="mt-6 w-full"
                   variant={plan.highlighted ? 'primary' : 'secondary'}
-                  disabled={isCurrent}
+                  // The current plan and Free are never checkout targets.
+                  disabled={isCurrent || id === 'FREE' || disabled}
                   loading={busyPlan === id}
-                  onClick={() => onSelect(id, yearly ? 'YEARLY' : 'MONTHLY')}
+                  onClick={() => onSelect(id)}
                 >
-                  {isCurrent ? 'Your current plan' : plan.cta}
+                  {isCurrent ? 'Current Plan' : id === 'FREE' ? 'Included' : plan.cta}
                 </Button>
               ) : (
                 <Button asChild className="mt-6 w-full" variant={plan.highlighted ? 'primary' : 'secondary'}>

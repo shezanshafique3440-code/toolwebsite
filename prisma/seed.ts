@@ -19,6 +19,7 @@ import {
   productAnalysisSchema,
 } from '@/lib/ai/schemas';
 import { computeOverallScore, scoreBand } from '@/lib/scoring';
+import { applySubscriptionState } from '@/lib/billing/subscription-state';
 import { slugify } from '@/lib/utils';
 
 const prisma = new PrismaClient();
@@ -104,18 +105,21 @@ async function upsertUser(input: {
     },
   });
 
+  // Seeded plans go through the same single writer the webhook uses, so the
+  // denormalised User.plan mirror cannot drift. They are marked as manual
+  // grants: no payment was taken, and nothing should read them as revenue.
   const { start, end } = monthWindow();
-  await prisma.subscription.upsert({
-    where: { userId: user.id },
-    update: { plan: input.plan, status: 'ACTIVE', currentPeriodStart: start, currentPeriodEnd: end },
-    create: {
+  await applySubscriptionState(
+    {
       userId: user.id,
       plan: input.plan,
       status: 'ACTIVE',
+      provider: input.plan === 'FREE' ? 'internal' : 'manual',
       currentPeriodStart: start,
       currentPeriodEnd: end,
     },
-  });
+    { reason: 'seed' },
+  );
 
   return user;
 }

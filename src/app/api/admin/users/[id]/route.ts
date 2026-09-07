@@ -9,9 +9,10 @@ export const dynamic = 'force-dynamic';
 
 type Context = { params: Promise<Record<string, string>> };
 
+// Plan is deliberately absent: a complimentary plan is an audited manual grant
+// (POST .../grant), never a silent field edit that could look like a payment.
 const updateSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
-  plan: z.enum(['FREE', 'PRO', 'BUSINESS']).optional(),
   role: z.enum(['USER', 'ADMIN']).optional(),
   bonusCredits: z.coerce.number().int().min(0).max(100_000).optional(),
 });

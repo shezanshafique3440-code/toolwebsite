@@ -14,6 +14,9 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'RATE_LIMITED'
   | 'QUOTA_EXCEEDED'
+  | 'PRO_PLAN_REQUIRED'
+  | 'BUSINESS_PLAN_REQUIRED'
+  | 'BILLING_UNAVAILABLE'
   | 'AI_UNAVAILABLE'
   | 'AI_INVALID_RESPONSE'
   | 'ACCOUNT_SUSPENDED'
@@ -28,6 +31,9 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   CONFLICT: 409,
   RATE_LIMITED: 429,
   QUOTA_EXCEEDED: 402,
+  PRO_PLAN_REQUIRED: 403,
+  BUSINESS_PLAN_REQUIRED: 403,
+  BILLING_UNAVAILABLE: 503,
   AI_UNAVAILABLE: 503,
   AI_INVALID_RESPONSE: 502,
   ACCOUNT_SUSPENDED: 403,
@@ -43,6 +49,9 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   CONFLICT: 'That action conflicts with the current state of your account.',
   RATE_LIMITED: 'Too many requests. Please wait a moment and try again.',
   QUOTA_EXCEEDED: "You've reached your monthly analysis limit. Upgrade your plan to continue.",
+  PRO_PLAN_REQUIRED: 'This feature is available on the Pro and Business plans.',
+  BUSINESS_PLAN_REQUIRED: 'This feature is available on the Business plan.',
+  BILLING_UNAVAILABLE: 'Payments are not available right now. Please try again later.',
   AI_UNAVAILABLE: 'AI analysis is temporarily unavailable. Please try again shortly.',
   AI_INVALID_RESPONSE:
     'The AI returned an unexpected result. We retried automatically — please try once more.',

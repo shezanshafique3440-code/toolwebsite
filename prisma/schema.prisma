@@ -31,6 +31,7 @@ enum SubscriptionStatus {
   ACTIVE
   TRIALING
   PAST_DUE
+  PAUSED
   CANCELED
 }
 
@@ -68,22 +69,26 @@ enum LogLevel {
 }
 
 model User {
-  id              String     @id @default(cuid())
-  email           String     @unique
-  passwordHash    String
-  name            String
-  avatarUrl       String?
-  role            Role       @default(USER)
-  status          UserStatus @default(ACTIVE)
-  emailVerifiedAt DateTime?
+  id                 String             @id @default(cuid())
+  email              String             @unique
+  passwordHash       String
+  name               String
+  avatarUrl          String?
+  role               Role               @default(USER)
+  status             UserStatus         @default(ACTIVE)
+  emailVerifiedAt    DateTime?
   // Bumped on password reset / "sign out everywhere" / suspension so every
   // previously issued session token stops validating.
-  sessionVersion  Int        @default(1)
+  sessionVersion     Int                @default(1)
   // Admin-granted extra AI credits on top of the plan allowance.
-  bonusCredits    Int        @default(0)
-  lastLoginAt     DateTime?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  bonusCredits       Int                @default(0)
+  /// Mirrors Subscription.plan / .status for fast listing and filtering.
+  /// Written only by applySubscriptionState() so the two cannot drift.
+  plan               Plan               @default(FREE)
+  subscriptionStatus SubscriptionStatus @default(ACTIVE)
+  lastLoginAt        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   subscription       Subscription?
   usagePeriods       Usage[]
@@ -99,10 +104,13 @@ model User {
   passwordResets     PasswordResetToken[]
   emailVerifications EmailVerificationToken[]
   aiRequests         AiRequestLog[]
+  manualGrants       ManualPlanGrant[]        @relation("ManualGrantRecipient")
+  issuedGrants       ManualPlanGrant[]        @relation("ManualGrantIssuer")
 
   @@index([createdAt])
   @@index([role])
   @@index([status])
+  @@index([plan])
 }
 
 model Subscription {
@@ -114,10 +122,19 @@ model Subscription {
   currentPeriodStart     DateTime           @default(now())
   currentPeriodEnd       DateTime
   cancelAtPeriodEnd      Boolean            @default(false)
-  // Billing provider abstraction: "internal" until a real processor is wired up.
+  /// "paddle" for a real paid subscription, "manual" for an audited admin
+  /// grant, "internal" for the default Free record. Never set from a request.
   provider               String             @default("internal")
   providerCustomerId     String?
-  providerSubscriptionId String?
+  /// Unique: a Paddle subscription belongs to exactly one account, and the
+  /// webhook resolves the local record through this column.
+  providerSubscriptionId String?            @unique
+  /// Paddle price id the subscription is currently billed on.
+  priceId                String?
+  /// Verbatim provider status, kept for support and troubleshooting.
+  providerStatus         String?
+  pausedAt               DateTime?
+  endedAt                DateTime?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -125,6 +142,7 @@ model Subscription {
 
   @@index([plan])
   @@index([status])
+  @@index([providerCustomerId])
 }
 
 /// One row per user per billing period. Credits are consumed here.
@@ -416,4 +434,47 @@ model SystemLog {
 
   @@index([createdAt])
   @@index([level, createdAt])
+}
+
+/// Every webhook delivery is recorded before it is applied. `eventId` is unique,
+/// so a redelivered event can never be processed a second time.
+model PaymentEvent {
+  id          String    @id @default(cuid())
+  provider    String    @default("paddle")
+  eventId     String    @unique
+  eventType   String
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  /// Set when handling failed, so a delivery can be investigated and replayed.
+  error       String?
+  /// Provider payload, retained for support. Never contains card details:
+  /// Paddle does not send them.
+  payload     Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([processed])
+  @@index([createdAt])
+}
+
+/// Complimentary plans granted by an administrator. Deliberately separate from
+/// Subscription so a manual grant is never mistaken for a Paddle payment.
+model ManualPlanGrant {
+  id          String    @id @default(cuid())
+  userId      String
+  grantedById String
+  plan        Plan
+  reason      String
+  /// Null means the grant stands until it is revoked.
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user      User @relation("ManualGrantRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User @relation("ManualGrantIssuer", fields: [grantedById], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
