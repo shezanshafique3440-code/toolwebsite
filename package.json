@@ -2,7 +2,7 @@
   "name": "productpilot-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "ProductPilot AI \u2014 AI-powered e-commerce product research and analysis platform.",
+  "description": "ProductPilot AI — AI-powered e-commerce product research and analysis platform.",
   "engines": {
     "node": ">=22.6.0"
   },
@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
-    "@prisma/client": "6.16.2",
+    "@prisma/client": "6.19.3",
     "@radix-ui/react-dialog": "1.1.6",
     "@radix-ui/react-dropdown-menu": "2.1.6",
     "@radix-ui/react-label": "2.1.2",
@@ -40,7 +40,7 @@
     "clsx": "2.1.1",
     "jose": "5.9.6",
     "lucide-react": "0.451.0",
-    "next": "15.5.4",
+    "next": "16.3.4",
     "openai": "^7.10.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
@@ -50,17 +50,19 @@
     "zod": "4.1.11"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "3.1.0",
     "@tailwindcss/postcss": "4.1.13",
     "@types/bcryptjs": "2.4.6",
     "@types/node": "22.7.5",
     "@types/react": "19.1.9",
     "@types/react-dom": "19.1.7",
     "eslint": "9.12.0",
-    "eslint-config-next": "15.5.4",
-    "postcss": "8.5.6",
-    "prisma": "6.16.2",
+    "eslint-config-next": "16.3.4",
+    "postcss": "8.5.28",
+    "prisma": "6.19.3",
     "tailwindcss": "4.1.13",
     "typescript": "5.6.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }

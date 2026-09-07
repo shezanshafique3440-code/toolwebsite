@@ -4,9 +4,10 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Reveals content on scroll with a single IntersectionObserver per element.
- * Falls back to visible immediately when the API is unavailable or the user
- * prefers reduced motion.
+ * Reveals content on scroll. Visibility is applied directly to the node rather
+ * than held in state: the transition is a one-way, purely visual change, so it
+ * costs no re-render. Content is shown immediately when IntersectionObserver is
+ * unavailable or the visitor prefers reduced motion.
  */
 export function Reveal({
   children,
@@ -20,14 +21,21 @@ export function Reveal({
   as?: 'div' | 'section' | 'li';
 }) {
   const ref = React.useRef<HTMLElement>(null);
-  const [visible, setVisible] = React.useState(false);
 
   React.useEffect(() => {
     const node = ref.current;
     if (!node) return;
 
-    if (typeof IntersectionObserver === 'undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setVisible(true);
+    const show = () => {
+      node.style.opacity = '1';
+      node.style.transform = 'none';
+    };
+
+    if (
+      typeof IntersectionObserver === 'undefined' ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      show();
       return;
     }
 
@@ -35,7 +43,7 @@ export function Reveal({
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            setVisible(true);
+            show();
             observer.disconnect();
           }
         }
@@ -51,11 +59,7 @@ export function Reveal({
     <Tag
       ref={ref as React.Ref<never>}
       className={cn('transition-[opacity,transform] duration-700 ease-out', className)}
-      style={{
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'none' : 'translateY(14px)',
-        transitionDelay: `${delay}ms`,
-      }}
+      style={{ opacity: 0, transform: 'translateY(14px)', transitionDelay: `${delay}ms` }}
     >
       {children}
     </Tag>

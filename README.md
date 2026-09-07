@@ -42,7 +42,7 @@ data unless it actually is.**
 
 ## Tech stack
 
-- **Next.js 15** (App Router) + **React 19** + **TypeScript**
+- **Next.js 16** (App Router) + **React 19** + **TypeScript**
 - **Tailwind CSS v4** with a token-based design system (light and dark)
 - **PostgreSQL** + **Prisma 6**
 - **Zod** for every input and every AI response
@@ -314,6 +314,18 @@ npm start          # behind nginx/caddy with TLS, or under a process manager
 ```
 
 ---
+
+## Dependency security
+
+`npm audit` is expected to be clean of moderate-and-above advisories. Two low-severity advisories
+remain in the ESLint toolchain; they affect linting only and never ship in the application.
+
+`package.json` pins an override for `deepmerge-ts` so the Prisma CLI picks up the patched release
+without forcing a Prisma major upgrade. Re-check with:
+
+```bash
+npm audit
+```
 
 ## Testing
 

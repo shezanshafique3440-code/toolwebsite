@@ -57,12 +57,10 @@ export function ResearchForm({
   const [fields, setFields] = React.useState<Record<string, string>>({});
 
   // The stepper reflects the phases of the request, not a fake countdown: it
-  // pauses on the final step until the server actually responds.
+  // pauses on the final step until the server actually responds. The step is
+  // reset where a run starts, so the effect only owns the interval.
   React.useEffect(() => {
-    if (!pending) {
-      setStep(0);
-      return;
-    }
+    if (!pending) return;
     const timer = window.setInterval(() => {
       setStep((current) => (current >= STEPS.length - 1 ? current : current + 1));
     }, 2600);
@@ -74,6 +72,7 @@ export function ResearchForm({
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    setStep(0);
     setPending(true);
     setError(null);
     setFields({});

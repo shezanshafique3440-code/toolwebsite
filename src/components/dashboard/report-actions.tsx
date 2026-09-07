@@ -54,7 +54,15 @@ export function ReportActions({
     try {
       // A PDF always exports an immutable snapshot, so one is created first.
       const report = await createReport();
-      window.location.href = `/api/reports/${report.id}/export`;
+      // The endpoint responds with Content-Disposition: attachment, so this is a
+      // file download rather than a navigation — an anchor click keeps the SPA
+      // history untouched.
+      const link = document.createElement('a');
+      link.href = `/api/reports/${report.id}/export`;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       toast({ title: 'Preparing your PDF', description: 'The download will start in a moment.', variant: 'success' });
       router.refresh();
     } catch (error) {

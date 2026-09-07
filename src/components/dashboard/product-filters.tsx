@@ -28,13 +28,9 @@ export function ProductFilters() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [query, setQuery] = React.useState(searchParams.get('q') ?? '');
+  const activeQuery = searchParams.get('q') ?? '';
   const sort = searchParams.get('sort') ?? 'newest';
   const filter = searchParams.get('filter') ?? 'all';
-
-  React.useEffect(() => {
-    setQuery(searchParams.get('q') ?? '');
-  }, [searchParams]);
 
   const update = React.useCallback(
     (changes: Record<string, string>) => {
@@ -57,7 +53,8 @@ export function ProductFilters() {
         className="relative flex-1"
         onSubmit={(event) => {
           event.preventDefault();
-          update({ q: query.trim() });
+          const value = new FormData(event.currentTarget).get('q');
+          update({ q: String(value ?? '').trim() });
         }}
         role="search"
       >
@@ -65,11 +62,14 @@ export function ProductFilters() {
           Search products
         </label>
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" aria-hidden />
+        {/* Keyed on the active query so navigating (or clearing filters)
+            resets the field, without mirroring URL state into React state. */}
         <Input
+          key={activeQuery}
           id="product-search"
+          name="q"
           type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          defaultValue={activeQuery}
           placeholder="Search by name or category…"
           className="pl-9"
         />
